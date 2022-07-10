@@ -367,6 +367,12 @@ Resources:
             sudo chmod +x /usr/local/bin/docker-compose
             sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
             sudo wget https://raw.githubusercontent.com/Kouenteen/aws-wp-oc/main/docker-compose.yml
+            cat >> docker-compose.yml << EOF
+              WORDPRESS_DB_HOST: ${RDSPrimaryDB.Endpoint.Address}:3306
+              WORDPRESS_DB_USER: ${RDSDBUser}
+              WORDPRESS_DB_PASSWORD: ${RDSDBPassword}
+              WORDPRESS_DB_NAME: ${RDSDBName}
+            EOF
             docker-compose up -d --build
 
             cat > wp-autoinstall.sh << EOF
