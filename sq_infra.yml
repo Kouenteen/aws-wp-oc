@@ -1,0 +1,441 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  SQ_OC AWS CloudFormation Network Template
+Parameters:
+  VpcCidrBlock:
+    Type: String
+    Default: "10.0.0.0/16"
+    Description: Adresse reseau du VPC.
+  AmiIdentifier:
+    Type: String
+    Default: "ami-0913ad14dca5cb0cd"
+    Description: ID de l'AMI custom.
+  RDSDBName:
+    Type: String
+    Default: "wordpress"
+    Description: Nom de la base de donnees Wordpress.
+  RDSDBUser:
+    Type: String
+    Default: "wp_user"
+    Description: Nom de l'utilisateur de la base de donnees Wordpress.
+  RDSDBPassword:
+    Type: String
+    NoEcho: true
+    Default: "czMZzGMn4eTkCFPF"
+    Description: Mot de passe de la base de donnees Wordpress.
+  WPAdminUser:
+    Type: String
+    Default: "Quentin"
+    Description: Nom de l'utilisateur de l'interface d'administration de Wordpress.
+  WPAdminPassword:
+    Type: String
+    NoEcho: true
+    Default: "T5Q4HwW53zwmy4As"
+    Description: Mot de passe de l'utilisateur de l'interface d'administration de Wordpress.
+
+#####
+#
+# VPC (CLOUD PRIVÉ VIRTUEL) QUI ENGLOBE TOUTES LES RESSOURCES
+#
+#####
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCidrBlock
+      Tags:
+        - Key: Name
+          Value: 'MainVPC'
+
+
+#####
+#
+# SOUS-RÉSEAUX PRIVÉS PUIS PUBLICS
+#
+#####
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      AvailabilityZone: eu-west-3a
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 1, 8 ]]
+      Tags:
+        - Key: Name
+          Value: 'MainVPC-Private-A'
+      VpcId: !Ref VPC
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn: PrivateSubnetA
+    Properties:
+      AvailabilityZone: eu-west-3b
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 2, 8 ]]
+      Tags:
+        - Key: Name
+          Value: 'MainVPC-Private-B'
+      VpcId: !Ref VPC
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn: PrivateSubnetB
+    Properties:
+      AvailabilityZone: eu-west-3a
+      CidrBlock: !Select [ 100, !Cidr [ !GetAtt VPC.CidrBlock, 101, 8 ]]
+      Tags:
+        - Key: Name
+          Value: 'MainVPC-Public-A'
+      VpcId: !Ref VPC
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn: PublicSubnetA
+    Properties:
+      AvailabilityZone: eu-west-3b
+      CidrBlock: !Select [ 101, !Cidr [ !GetAtt VPC.CidrBlock, 102, 8 ]]
+      Tags:
+        - Key: Name
+          Value: 'MainVPC-Public-B'
+      VpcId: !Ref VPC
+
+
+#####
+#
+# PASSERELLE INTERNET PUIS PASSERELLES NAT
+#
+#####
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: PublicSubnetB
+    Properties:
+      Tags:
+        - Key: Name
+          Value: 'MainVPC-InternetGateway'
+  AttachInternetGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    DependsOn: InternetGateway
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  NatEipA:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachInternetGateway
+    Properties:
+      Domain: VPC
+  NatEipB:
+    Type: AWS::EC2::EIP
+    DependsOn: NatEipA
+    Properties:
+      Domain: VPC
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatEipB
+    Properties:
+      AllocationId: !GetAtt NatEipA.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: MainVPC-Nat-A
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatGatewayA
+    Properties:
+      AllocationId: !GetAtt NatEipB.AllocationId
+      SubnetId: !Ref PublicSubnetB
+      Tags:
+        - Key: Name
+          Value: MainVPC-Nat-B
+
+
+#####
+#
+# TABLES DE ROUTAGE PRIVÉES PUIS PUBLIQUES 
+#
+#####
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    DependsOn: NatGatewayB
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MainVPC-Route-Private-A
+  AttachPrivateRouteTableA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: PrivateRouteTableA
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      SubnetId: !Ref PrivateSubnetA
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    DependsOn: AttachPrivateRouteTableA
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MainVPC-Route-Private-B
+  AttachPrivateRouteTableB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: PrivateRouteTableB
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      SubnetId: !Ref PrivateSubnetB
+  PublicRouteTableA:
+    Type: AWS::EC2::RouteTable
+    DependsOn: AttachPrivateRouteTableB
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MainVPC-Route-Public-A
+  AttachPublicRouteTableA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: PublicRouteTableA
+    Properties:
+      RouteTableId: !Ref PublicRouteTableA
+      SubnetId: !Ref PublicSubnetA
+  PublicRouteTableB:
+    Type: AWS::EC2::RouteTable
+    DependsOn: AttachPublicRouteTableA
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MainVPC-Route-Public-B
+  AttachPublicRouteTableB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: PublicRouteTableB
+    Properties:
+      RouteTableId: !Ref PublicRouteTableB
+      SubnetId: !Ref PublicSubnetB
+
+
+#####
+#
+# ROUTES PRIVÉES PUIS PUBLIQUES
+#
+#####
+  PrivateRouteA:
+    Type: AWS::EC2::Route
+    DependsOn: AttachPrivateRouteTableB
+    Properties:      
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayA
+      RouteTableId: !Ref PrivateRouteTableA
+  PrivateRouteB:
+    Type: AWS::EC2::Route
+    DependsOn: PrivateRouteA
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayB
+      RouteTableId: !Ref PrivateRouteTableB
+  PublicRouteA:
+    Type: AWS::EC2::Route
+    DependsOn: PrivateRouteB
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTableA
+  PublicRouteB:
+    Type: AWS::EC2::Route
+    DependsOn: PublicRouteA
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTableB
+
+
+#####
+#
+# BUCKET S3 
+#
+#####
+  WordpressS3Bucket:
+    Type: "AWS::S3::Bucket"
+    Description: Bucket Amazon S3 pour les Wordpress
+    Properties:
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+#####
+#
+# BASES DE DONNEES RDS
+#
+#####
+  RDSPrivateSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    DependsOn: WordpressS3Bucket
+    Properties: 
+        DBSubnetGroupDescription: Groupement des PrivateSubnets A et B pour RDS
+        SubnetIds: 
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+
+  RDSSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    DependsOn: RDSPrivateSubnetGroup
+    Properties:
+      GroupDescription: Security-Group de RDS
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+      VpcId: !Ref VPC
+
+  RDSPrimaryDB:
+    Type: AWS::RDS::DBInstance
+    DependsOn: RDSSecurityGroup
+    Properties:
+      AutoMinorVersionUpgrade: true
+      AllocatedStorage: "20"
+      DBInstanceClass: "db.t2.micro"
+      DBName: !Ref RDSDBName
+      DBSubnetGroupName: !Ref RDSPrivateSubnetGroup
+      Engine: mariadb
+      MasterUsername: !Ref RDSDBUser
+      MasterUserPassword: !Ref RDSDBPassword
+      MultiAZ: true
+      StorageType: "gp2"
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+
+#  RDSReplicaDB:
+#    Type: AWS::RDS::DBInstance
+#    DependsOn: RDSPrimaryDB
+#    Properties:
+#      AvailabilityZone: eu-west-3b
+#      DBInstanceClass: "db.t2.micro"
+#      SourceDBInstanceIdentifier: !Ref RDSPrimaryDB
+#      StorageType: "gp2"
+#      Tags:
+#        - Key: Name
+#          Value: replica wordpress
+
+
+#####
+#
+# SECURITY-GROUP DES EC2 WORDPRESS PUIS LAUNCH CONFIG, LOAD-BALANCER
+#
+#####
+  WordpressEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: RDSPrimaryDB
+    Properties:
+      GroupDescription: Security-Group des EC2, de la Launch-Config et du Load-Balancer
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0          
+      VpcId: !Ref VPC
+
+  WordpressEC2LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: !Ref AmiIdentifier
+      InstanceType: t2.micro
+      SecurityGroups:
+        - !Ref WordpressEC2SecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            cd /home/ec2-user/
+            sudo yum update -y
+            sudo yum install docker -y
+            sudo usermod -a -G docker ec2-user
+            sudo systemctl enable --now docker.service
+            sudo curl -L "https://github.com/docker/compose/releases/download/1.26.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+            sudo wget https://raw.githubusercontent.com/Kouenteen/AWS/docker/docker-compose.yml
+            cat >> docker-compose.yml << EOF
+                  WORDPRESS_DB_HOST: ${RDSPrimaryDB.Endpoint.Address}:3306
+            EOF
+            docker-compose up -d --build
+
+            cat > wpinstall.sh << EOF
+            #!/bin/bash -xe
+            docker-compose exec -T wordpress wp core install --url=${WordpressEC2LoadBalancer.DNSName} --title="SQ-WP10" --admin_user=${WPAdminUser} --admin_password=${WPAdminPassword} --admin_email=sabarequentin663@outlook.fr 
+            sleep 25
+            docker-compose exec -T wordpress wp core update
+            sleep 25
+            docker-compose exec -T wordpress wp theme activate twentytwenty
+            sleep 5
+            docker-compose exec -T wordpress wp language theme install twentytwenty fr_FR
+            sleep 5
+            docker-compose exec -T wordpress wp theme update --all
+            sleep 5
+            docker-compose exec -T wordpress wp plugin update --all
+            EOF
+            sudo chmod 755 wpinstall.sh
+            sudo ./wpinstall.sh
+
+  WordpressEC2ScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref WordpressEC2LaunchConfig
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      DesiredCapacity: 2
+      MinSize: 2
+      MaxSize: 4
+      TargetGroupARNs:
+        - !Ref WordpressEC2TargetGroup
+
+  WordpressEC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: instance
+      TargetGroupAttributes:
+      - Key: stickiness.enabled
+        Value: true 
+      - Key: stickiness.type
+        Value: lb_cookie
+      - Key: stickiness.lb_cookie.duration_seconds
+        Value: 10
+      Matcher: 
+        HttpCode: '200,301,302,401,403,404'
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+
+  WordpressEC2LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref WordpressEC2SecurityGroup
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+  WordpressEC2LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      LoadBalancerArn: !Ref WordpressEC2LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WordpressEC2TargetGroup
