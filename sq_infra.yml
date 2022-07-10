@@ -366,13 +366,10 @@ Resources:
             sudo curl -L "https://github.com/docker/compose/releases/download/1.26.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             sudo chmod +x /usr/local/bin/docker-compose
             sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
-            sudo wget https://raw.githubusercontent.com/Kouenteen/AWS/docker/docker-compose.yml
-            cat >> docker-compose.yml << EOF
-                  WORDPRESS_DB_HOST: ${RDSPrimaryDB.Endpoint.Address}:3306
-            EOF
+            sudo wget https://raw.githubusercontent.com/Kouenteen/aws-wp-oc/main/docker-compose.yml
             docker-compose up -d --build
 
-            cat > wpinstall.sh << EOF
+            cat > wp-autoinstall.sh << EOF
             #!/bin/bash -xe
             docker-compose exec -T wordpress wp core install --url=${WordpressEC2LoadBalancer.DNSName} --title="SQ-WP10" --admin_user=${WPAdminUser} --admin_password=${WPAdminPassword} --admin_email=sabarequentin663@outlook.fr 
             sleep 25
@@ -386,8 +383,8 @@ Resources:
             sleep 5
             docker-compose exec -T wordpress wp plugin update --all
             EOF
-            sudo chmod 755 wpinstall.sh
-            sudo ./wpinstall.sh
+            sudo chmod 755 wp-autoinstall.sh
+            sudo ./wp-autoinstall.sh
 
   WordpressEC2ScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
